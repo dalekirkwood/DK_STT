@@ -8,6 +8,7 @@ import os
 import json
 import math
 import struct
+import sys
 import wave
 import gi
 gi.require_version("Gtk", "3.0")
@@ -17,11 +18,14 @@ from gi.repository import Gtk, GLib, Gdk
 from gi.repository import AppIndicator3 as AppIndicator
 from gi.repository import Notify
 
-API_KEY = "iPMGv6F5sMwEOMjqGGtKQnMPjCA7EjYc"
+# ponytail: --dev uses separate temp files so prod + dev run side-by-side
+DEV = "--dev" in sys.argv
+SUFFIX = "-dev" if DEV else ""
+
 API_URL = "https://api.lemonfox.ai/v1/audio/transcriptions"
-AUDIO_FILE = "/tmp/stt-recording.wav"
-PID_FILE = "/tmp/stt-app.pid"
-BEEP_FILE = "/tmp/stt-beep.wav"
+AUDIO_FILE = f"/tmp/stt{SUFFIX}-recording.wav"
+PID_FILE = f"/tmp/stt{SUFFIX}-app.pid"
+BEEP_FILE = f"/tmp/stt{SUFFIX}-beep.wav"
 KEY_FILE = os.path.expanduser("~/.config/stt/key")
 
 recording = False
@@ -58,23 +62,24 @@ def ding():
                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 def snack(msg, icon="microphone"):
-    n = Notify.Notification.new("STT", msg, icon)
+    n = Notify.Notification.new("STT" if not DEV else "STT DEV", msg, icon)
     n.set_timeout(2000)
     n.show()
 
 def update_ui():
+    dev = "DEV " if DEV else ""
     if processing:
         toggle_label.set_text("Processing...")
         toggle_item.set_sensitive(False)
-        indicator.set_title("Processing...")
+        indicator.set_title(dev + "Processing...")
     elif recording:
         toggle_label.set_text("Stop Recording")
         toggle_item.set_sensitive(True)
-        indicator.set_title("Recording...")
+        indicator.set_title(dev + "Recording...")
     else:
         toggle_label.set_text("Start Recording")
         toggle_item.set_sensitive(True)
-        indicator.set_title("Idle — click or Ctrl+Alt+V")
+        indicator.set_title(dev + "Idle — click or Alt+S")
 
 def start_record():
     global recording, arecord_proc
@@ -194,7 +199,7 @@ def set_api_key(_widget):
 Notify.init("stt-type")
 
 indicator = AppIndicator.Indicator.new(
-    "stt-type", "audio-input-microphone",
+    "stt-type" if not DEV else "stt-type-dev", "audio-input-microphone",
     AppIndicator.IndicatorCategory.APPLICATION_STATUS)
 indicator.set_status(AppIndicator.IndicatorStatus.ACTIVE)
 
