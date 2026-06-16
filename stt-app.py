@@ -35,6 +35,10 @@ PROVIDER_URLS = {
     "groq":     "https://api.groq.com/openai/v1/audio/transcriptions",
     "custom":   "",  # stored in ~/.config/stt/custom-url
 }
+PROVIDER_MODEL = {
+    "groq":     "whisper-large-v3-turbo",
+    # lemonfox & openai auto-select model, no param needed
+}
 
 AUDIO_FILE = f"/tmp/stt{SUFFIX}-recording.wav"
 PID_FILE = f"/tmp/stt{SUFFIX}-app.pid"
@@ -260,6 +264,8 @@ def transcribe():
         cmd += ["-F", "translate=true"]
     if PROMPT:
         cmd += ["-F", f"prompt={PROMPT}"]
+    if PROVIDER in PROVIDER_MODEL:
+        cmd += ["-F", f"model={PROVIDER_MODEL[PROVIDER]}"]
     for attempt in range(1, MAX_RETRIES + 1):
         if attempt > 1:
             GLib.idle_add(lambda a=attempt: snack(
