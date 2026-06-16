@@ -608,7 +608,28 @@ def setup_local_whisper(_widget=None):
     if dialog.run() == Gtk.ResponseType.OK:
         model_size = combo.get_active_id()
         dialog.destroy()
-        GLib.idle_add(lambda: snack("Installing faster-whisper... (may take a minute)", "emblem-synchronizing"))
+        # ponytail: progress window with pulsing bar — user knows something's happening
+        prog = Gtk.Window(title="Local Whisper Setup")
+        prog.set_default_size(320, -1)
+        prog.set_resizable(False)
+        prog.set_keep_above(True)
+        prog.set_position(Gtk.WindowPosition.CENTER)
+        pbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        pbox.set_margin_top(16)
+        pbox.set_margin_bottom(16)
+        pbox.set_margin_start(16)
+        pbox.set_margin_end(16)
+        phase_label = Gtk.Label(label="Installing faster-whisper...")
+        pbox.pack_start(phase_label, False, False, 0)
+        bar = Gtk.ProgressBar()
+        pbox.pack_start(bar, False, False, 0)
+        prog.add(pbox)
+        prog.show_all()
+        pulse_id = GLib.timeout_add(120, lambda: (bar.pulse(), True)[1])
+        def _destroy_prog():
+            nonlocal pulse_id
+            GLib.source_remove(pulse_id)
+            prog.destroy()
         def _install():
             try:
                 r = subprocess.run(
@@ -618,7 +639,9 @@ def setup_local_whisper(_widget=None):
                 if r.returncode != 0:
                     err = r.stderr.strip().split("\n")[-1] if r.stderr.strip() else str(r.returncode)
                     GLib.idle_add(lambda e=err: snack(f"pip install failed: {e}", "dialog-error"))
+                    GLib.idle_add(_destroy_prog)
                     return
+                GLib.idle_add(lambda: phase_label.set_text("Downloading model..."))
                 os.makedirs(os.path.dirname(LOCAL_MODEL_FILE), exist_ok=True)
                 with open(LOCAL_MODEL_FILE, "w") as f:
                     f.write(model_size)
@@ -627,16 +650,19 @@ def setup_local_whisper(_widget=None):
                     from faster_whisper import WhisperModel
                     LOCAL_AVAILABLE = True
                 except ImportError:
-                    GLib.idle_add(lambda: snack("Import failed after install. Restarting...", "dialog-information"))
+                    GLib.idle_add(_destroy_prog)
+                    GLib.idle_add(lambda: snack("Import failed. Restarting...", "dialog-information"))
                     time.sleep(1)
                     os.execv(sys.executable, [sys.executable] + sys.argv)
                     return
                 _ = WhisperModel(model_size, device="cpu", compute_type="int8")
+                GLib.idle_add(_destroy_prog)
                 GLib.idle_add(refresh_provider_menu)
                 GLib.idle_add(lambda: local_model_item.set_visible(True))
                 GLib.idle_add(lambda: snack("Local Whisper ready!", "dialog-information"))
                 GLib.idle_add(lambda: switch_provider("local"))
             except Exception as e:
+                GLib.idle_add(_destroy_prog)
                 GLib.idle_add(lambda: snack(f"Install failed: {e}", "dialog-error"))
         threading.Thread(target=_install, daemon=True).start()
     else:
