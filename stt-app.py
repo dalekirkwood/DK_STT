@@ -184,7 +184,6 @@ def start_record():
 def stop_record():
     global recording, processing, arecord_proc
     recording = False
-    update_ui()
     ding()
     if arecord_proc:
         arecord_proc.terminate()
@@ -194,6 +193,7 @@ def stop_record():
             arecord_proc.kill()
         arecord_proc = None
     processing = True
+    update_ui()
     threading.Thread(target=transcribe, daemon=True).start()
 
 def transcribe():
