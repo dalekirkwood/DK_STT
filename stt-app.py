@@ -27,6 +27,7 @@ AUDIO_FILE = f"/tmp/stt{SUFFIX}-recording.wav"
 PID_FILE = f"/tmp/stt{SUFFIX}-app.pid"
 BEEP_FILE = f"/tmp/stt{SUFFIX}-beep.wav"
 KEY_FILE = os.path.expanduser("~/.config/stt/key")
+LANG_FILE = os.path.expanduser("~/.config/stt/language")
 
 recording = False
 processing = False
@@ -41,6 +42,15 @@ def load_key():
         return ""
 
 API_KEY = load_key()
+
+def load_language():
+    try:
+        with open(LANG_FILE) as f:
+            return f.read().strip()
+    except FileNotFoundError:
+        return "english"
+
+LANGUAGE = load_language()
 
 with open(PID_FILE, "w") as f:
     f.write(str(os.getpid()))
@@ -71,14 +81,17 @@ def update_ui():
     if processing:
         toggle_label.set_text("Processing...")
         toggle_item.set_sensitive(False)
+        indicator.set_icon_full("dialog-warning", "")
         indicator.set_title(dev + "Processing...")
     elif recording:
         toggle_label.set_text("Stop Recording")
         toggle_item.set_sensitive(True)
+        indicator.set_icon_full("media-record", "")
         indicator.set_title(dev + "Recording...")
     else:
         toggle_label.set_text("Start Recording")
         toggle_item.set_sensitive(True)
+        indicator.set_icon_full("audio-input-microphone", "")
         indicator.set_title(dev + "Idle — click or Alt+S")
 
 def start_record():
@@ -117,13 +130,13 @@ def transcribe():
         return
     text = ""
     try:
-        r = subprocess.run(
-            ["curl", "-s", API_URL,
-             "-H", f"Authorization: Bearer {API_KEY}",
-             "-F", f"file=@{AUDIO_FILE}",
-             "-F", "language=english",
-             "-F", "response_format=json"],
-            capture_output=True, text=True, timeout=30)
+        cmd = ["curl", "-s", API_URL,
+               "-H", f"Authorization: Bearer {API_KEY}",
+               "-F", f"file=@{AUDIO_FILE}",
+               "-F", "response_format=json"]
+        if LANGUAGE != "auto":
+            cmd += ["-F", f"language={LANGUAGE}"]
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
         text = json.loads(r.stdout).get("text", "")
     except Exception as e:
         GLib.idle_add(lambda: snack(f"API error: {e}", "dialog-error"))
@@ -196,6 +209,63 @@ def set_api_key(_widget):
             snack("API key saved", "dialog-information")
     dialog.destroy()
 
+LANGUAGES = [
+    ("auto", "Auto-detect (recommended)"),
+    ("english", "English"),
+    ("chinese", "Chinese"),
+    ("spanish", "Spanish"),
+    ("french", "French"),
+    ("german", "German"),
+    ("portuguese", "Portuguese"),
+    ("russian", "Russian"),
+    ("japanese", "Japanese"),
+    ("korean", "Korean"),
+    ("arabic", "Arabic"),
+    ("hindi", "Hindi"),
+    ("italian", "Italian"),
+    ("dutch", "Dutch"),
+    ("turkish", "Turkish"),
+    ("polish", "Polish"),
+    ("swedish", "Swedish"),
+    ("vietnamese", "Vietnamese"),
+    ("thai", "Thai"),
+    ("hebrew", "Hebrew"),
+    ("greek", "Greek"),
+]
+
+def set_language(_widget):
+    dialog = Gtk.Dialog(title="Set Language", buttons=(
+        Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
+        Gtk.STOCK_OK, Gtk.ResponseType.OK))
+    dialog.set_default_size(320, -1)
+    box = dialog.get_content_area()
+    box.set_spacing(6)
+    box.set_margin_top(12)
+    box.set_margin_bottom(12)
+    box.set_margin_start(12)
+    box.set_margin_end(12)
+    box.add(Gtk.Label(label="Transcription language:"))
+    combo = Gtk.ComboBoxText()
+    current = load_language()
+    active_idx = 0
+    for i, (code, name) in enumerate(LANGUAGES):
+        combo.append(code, name)
+        if code == current:
+            active_idx = i
+    combo.set_active(active_idx)
+    box.add(combo)
+    box.show_all()
+    if dialog.run() == Gtk.ResponseType.OK:
+        code = combo.get_active_id()
+        if code:
+            os.makedirs(os.path.dirname(LANG_FILE), exist_ok=True)
+            with open(LANG_FILE, "w") as f:
+                f.write(code)
+            global LANGUAGE
+            LANGUAGE = code
+            snack(f"Language: {dict(LANGUAGES).get(code, code)}", "dialog-information")
+    dialog.destroy()
+
 Notify.init("stt-type")
 
 indicator = AppIndicator.Indicator.new(
@@ -213,6 +283,9 @@ menu.append(Gtk.SeparatorMenuItem())
 mi_key = Gtk.MenuItem.new_with_label("Set API Key...")
 mi_key.connect("activate", set_api_key)
 menu.append(mi_key)
+ml = Gtk.MenuItem.new_with_label("Set Language...")
+ml.connect("activate", set_language)
+menu.append(ml)
 qi = Gtk.MenuItem.new_with_label("Quit")
 qi.connect("activate", quit_app)
 menu.append(qi)

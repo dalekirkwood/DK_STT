@@ -35,6 +35,9 @@ if [ -n "$USER_KEY" ]; then
 elif [ ! -f "$KEY_FILE" ]; then
     echo "  No key set. Use tray menu 'Set API Key' later."
 fi
+if [ ! -f "$HOME/.config/stt/language" ]; then
+    echo "english" > "$HOME/.config/stt/language"
+fi
 
 # ── copy ──
 echo "[4/7] Installing files..."
