@@ -22,11 +22,21 @@ API_URL = "https://api.lemonfox.ai/v1/audio/transcriptions"
 AUDIO_FILE = "/tmp/stt-recording.wav"
 PID_FILE = "/tmp/stt-app.pid"
 BEEP_FILE = "/tmp/stt-beep.wav"
+KEY_FILE = os.path.expanduser("~/.config/stt/key")
 
 recording = False
 processing = False
 arecord_proc = None
 TYPETOOL = "wtype" if os.environ.get("XDG_SESSION_TYPE") == "wayland" else "xdotool"
+
+def load_key():
+    try:
+        with open(KEY_FILE) as f:
+            return f.read().strip()
+    except FileNotFoundError:
+        return ""
+
+API_KEY = load_key()
 
 with open(PID_FILE, "w") as f:
     f.write(str(os.getpid()))
@@ -95,6 +105,11 @@ def transcribe():
     global processing
     GLib.idle_add(lambda: snack("Transcribing..."))
     time.sleep(0.3)
+    if not API_KEY:
+        GLib.idle_add(lambda: snack("No API key set — use tray menu", "dialog-error"))
+        processing = False
+        GLib.idle_add(update_ui)
+        return
     text = ""
     try:
         r = subprocess.run(
@@ -145,6 +160,37 @@ def quit_app(*_args):
     Notify.uninit()
     Gtk.main_quit()
 
+def set_api_key(_widget):
+    dialog = Gtk.Dialog(title="Set API Key", buttons=(
+        Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
+        Gtk.STOCK_OK, Gtk.ResponseType.OK))
+    dialog.set_default_size(420, -1)
+    box = dialog.get_content_area()
+    box.set_spacing(6)
+    box.set_margin_top(12)
+    box.set_margin_bottom(12)
+    box.set_margin_start(12)
+    box.set_margin_end(12)
+    box.add(Gtk.Label(label="Lemon Fox API Key (lemonfox.ai)"))
+    entry = Gtk.Entry()
+    entry.set_visibility(False)
+    entry.set_placeholder_text("sk-...")
+    current = load_key()
+    if current:
+        entry.set_text(current)
+    box.add(entry)
+    box.show_all()
+    if dialog.run() == Gtk.ResponseType.OK:
+        key = entry.get_text().strip()
+        if key:
+            os.makedirs(os.path.dirname(KEY_FILE), exist_ok=True)
+            with open(KEY_FILE, "w") as f:
+                f.write(key)
+            global API_KEY
+            API_KEY = key
+            snack("API key saved", "dialog-information")
+    dialog.destroy()
+
 Notify.init("stt-type")
 
 indicator = AppIndicator.Indicator.new(
@@ -159,6 +205,9 @@ toggle_item.connect("activate", on_toggle)
 menu = Gtk.Menu()
 menu.append(toggle_item)
 menu.append(Gtk.SeparatorMenuItem())
+mi_key = Gtk.MenuItem.new_with_label("Set API Key...")
+mi_key.connect("activate", set_api_key)
+menu.append(mi_key)
 qi = Gtk.MenuItem.new_with_label("Quit")
 qi.connect("activate", quit_app)
 menu.append(qi)
