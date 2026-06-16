@@ -636,11 +636,13 @@ menu.append(Gtk.SeparatorMenuItem())
 
 provider_items = {}
 providers_menu = Gtk.Menu()
+group = None
 for code, name in PROVIDERS:
     label = name
     if provider_has_key(code):
         label += " ✓"
-    item = Gtk.RadioMenuItem.new_with_label([], label)
+    item = Gtk.RadioMenuItem.new_with_label(group, label)
+    group = item.get_group()
     item.set_active(code == PROVIDER)
     item.connect("toggled", on_provider_activate, code)
     providers_menu.append(item)
