@@ -10,6 +10,7 @@ import math
 import struct
 import sys
 import wave
+import cairo
 import gi
 gi.require_version("Gtk", "3.0")
 gi.require_version("AppIndicator3", "0.1")
@@ -26,6 +27,9 @@ API_URL = "https://api.lemonfox.ai/v1/audio/transcriptions"
 AUDIO_FILE = f"/tmp/stt{SUFFIX}-recording.wav"
 PID_FILE = f"/tmp/stt{SUFFIX}-app.pid"
 BEEP_FILE = f"/tmp/stt{SUFFIX}-beep.wav"
+ICON_IDLE = f"/tmp/stt{SUFFIX}-icon-idle.png"
+ICON_WARN = f"/tmp/stt{SUFFIX}-icon-warn.png"
+ICON_REC  = f"/tmp/stt{SUFFIX}-icon-rec.png"
 KEY_FILE = os.path.expanduser("~/.config/stt/key")
 LANG_FILE = os.path.expanduser("~/.config/stt/language")
 
@@ -67,6 +71,18 @@ def gen_beep():
         wf.setframerate(rate)
         wf.writeframes(data)
 
+def gen_icons():
+    specs = [("idle", (0.15, 0.55, 0.92)),   # blue — ready
+             ("warn", (0.92, 0.55, 0.15)),   # orange — no key / error
+             ("rec",  (0.92, 0.15, 0.12))]   # red — recording
+    for name, color in specs:
+        s = cairo.ImageSurface(cairo.FORMAT_ARGB32, 22, 22)
+        ctx = cairo.Context(s)
+        ctx.arc(11, 11, 9, 0, 2 * math.pi)
+        ctx.set_source_rgb(*color)
+        ctx.fill()
+        s.write_to_png(f"/tmp/stt{SUFFIX}-icon-{name}.png")
+
 def ding():
     subprocess.Popen(["paplay", BEEP_FILE],
                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -81,18 +97,23 @@ def update_ui():
     if processing:
         toggle_label.set_text("Processing...")
         toggle_item.set_sensitive(False)
-        indicator.set_icon_full("dialog-warning", "")
+        indicator.set_icon_full(ICON_WARN, "")
         indicator.set_title(dev + "Processing...")
     elif recording:
         toggle_label.set_text("Stop Recording")
         toggle_item.set_sensitive(True)
-        indicator.set_icon_full("media-record", "")
+        indicator.set_icon_full(ICON_REC, "")
         indicator.set_title(dev + "Recording...")
-    else:
+    elif API_KEY:
         toggle_label.set_text("Start Recording")
         toggle_item.set_sensitive(True)
-        indicator.set_icon_full("audio-input-microphone", "")
-        indicator.set_title(dev + "Idle — click or Alt+S")
+        indicator.set_icon_full(ICON_IDLE, "")
+        indicator.set_title(dev + "Ready — click or Alt+S")
+    else:
+        toggle_label.set_text("Set API Key First")
+        toggle_item.set_sensitive(False)
+        indicator.set_icon_full(ICON_WARN, "")
+        indicator.set_title(dev + "No API key — use Set API Key")
 
 def start_record():
     global recording, arecord_proc
@@ -159,6 +180,9 @@ def transcribe():
 
 def on_toggle(_widget):
     global recording, processing
+    if not API_KEY:
+        snack("Set API key first — use tray menu", "dialog-error")
+        return
     if processing:
         return
     if not recording:
@@ -167,6 +191,9 @@ def on_toggle(_widget):
         stop_record()
 
 def on_signal(*_args):
+    if not API_KEY:
+        GLib.idle_add(lambda: snack("Set API key first — use tray menu", "dialog-error"))
+        return True
     GLib.idle_add(on_toggle, None)
     return True
 
@@ -175,6 +202,8 @@ def quit_app(*_args):
         arecord_proc.terminate()
     os.unlink(PID_FILE)
     os.unlink(BEEP_FILE)
+    for f in (ICON_IDLE, ICON_WARN, ICON_REC):
+        os.unlink(f)
     Notify.uninit()
     Gtk.main_quit()
 
@@ -206,6 +235,7 @@ def set_api_key(_widget):
                 f.write(key)
             global API_KEY
             API_KEY = key
+            GLib.idle_add(update_ui)
             snack("API key saved", "dialog-information")
     dialog.destroy()
 
@@ -294,6 +324,7 @@ indicator.set_menu(menu)
 
 update_ui()
 
+gen_icons()
 gen_beep()
 
 GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, signal.SIGUSR1, on_signal)
