@@ -72,15 +72,19 @@ def gen_beep():
         wf.writeframes(data)
 
 def gen_icons():
+    pix = Gtk.IconTheme.get_default().load_icon(
+        "audio-input-microphone", 22, Gtk.IconLookupFlags.FORCE_SIZE)
     specs = [("idle", (0.15, 0.55, 0.92)),   # blue — ready
              ("warn", (0.92, 0.55, 0.15)),   # orange — no key / error
              ("rec",  (0.92, 0.15, 0.12))]   # red — recording
     for name, color in specs:
         s = cairo.ImageSurface(cairo.FORMAT_ARGB32, 22, 22)
         ctx = cairo.Context(s)
-        ctx.arc(11, 11, 9, 0, 2 * math.pi)
+        Gdk.cairo_set_source_pixbuf(ctx, pix, 0, 0)
+        ctx.paint()
         ctx.set_source_rgb(*color)
-        ctx.fill()
+        ctx.set_operator(cairo.Operator.ATOP)
+        ctx.paint()
         s.write_to_png(f"/tmp/stt{SUFFIX}-icon-{name}.png")
 
 def ding():
