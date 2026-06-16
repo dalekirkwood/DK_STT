@@ -611,9 +611,14 @@ def setup_local_whisper(_widget=None):
         GLib.idle_add(lambda: snack("Installing faster-whisper... (may take a minute)", "emblem-synchronizing"))
         def _install():
             try:
-                subprocess.run(
-                    [sys.executable, "-m", "pip", "install", "--user", "faster-whisper"],
+                r = subprocess.run(
+                    [sys.executable, "-m", "pip", "install", "--user", "--break-system-packages",
+                     "faster-whisper"],
                     capture_output=True, text=True, timeout=180)
+                if r.returncode != 0:
+                    err = r.stderr.strip().split("\n")[-1] if r.stderr.strip() else str(r.returncode)
+                    GLib.idle_add(lambda e=err: snack(f"pip install failed: {e}", "dialog-error"))
+                    return
                 os.makedirs(os.path.dirname(LOCAL_MODEL_FILE), exist_ok=True)
                 with open(LOCAL_MODEL_FILE, "w") as f:
                     f.write(model_size)
@@ -622,7 +627,9 @@ def setup_local_whisper(_widget=None):
                     from faster_whisper import WhisperModel
                     LOCAL_AVAILABLE = True
                 except ImportError:
-                    GLib.idle_add(lambda: snack("pip install succeeded but import failed. Restart app.", "dialog-error"))
+                    GLib.idle_add(lambda: snack("Import failed after install. Restarting...", "dialog-information"))
+                    time.sleep(1)
+                    os.execv(sys.executable, [sys.executable] + sys.argv)
                     return
                 _ = WhisperModel(model_size, device="cpu", compute_type="int8")
                 GLib.idle_add(refresh_provider_menu)
@@ -630,7 +637,7 @@ def setup_local_whisper(_widget=None):
                 GLib.idle_add(lambda: snack("Local Whisper ready!", "dialog-information"))
                 GLib.idle_add(lambda: switch_provider("local"))
             except Exception as e:
-                GLib.idle_add(lambda: snack(f"Install failed: {e}. Try: pip3 install --user faster-whisper", "dialog-error"))
+                GLib.idle_add(lambda: snack(f"Install failed: {e}", "dialog-error"))
         threading.Thread(target=_install, daemon=True).start()
     else:
         dialog.destroy()
