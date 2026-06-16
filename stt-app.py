@@ -79,6 +79,7 @@ LANG_FILE = os.path.expanduser("~/.config/stt/language")
 TRANS_FILE = os.path.expanduser("~/.config/stt/translate")
 PROMPT_FILE = os.path.expanduser("~/.config/stt/prompt")
 DICT_FILE = os.path.expanduser("~/.config/stt/dictionary")
+NOTIF_FILE = os.path.expanduser("~/.config/stt/notifications")
 CUSTOM_URL_FILE = os.path.expanduser("~/.config/stt/custom-url")
 OLD_KEY_FILE = os.path.expanduser("~/.config/stt/key")
 
@@ -164,6 +165,14 @@ def load_dictionary():
 
 DICTIONARY = load_dictionary()
 
+def load_notifications():
+    try:
+        return open(NOTIF_FILE).read().strip() == "1"
+    except FileNotFoundError:
+        return True  # default: show notifications
+
+NOTIFICATIONS = load_notifications()
+
 with open(PID_FILE, "w") as f:
     f.write(str(os.getpid()))
 
@@ -217,6 +226,8 @@ def ding():
                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 def snack(msg, icon="microphone"):
+    if not NOTIFICATIONS and icon != "dialog-error":
+        return
     n = Notify.Notification.new("STT" if not DEV else "STT DEV", msg, icon)
     n.set_timeout(2000)
     n.show()
@@ -489,6 +500,13 @@ def toggle_translate(_widget):
         f.write("1" if TRANSLATE else "0")
     snack(f"Translate to English: {'ON' if TRANSLATE else 'OFF'}", "dialog-information")
 
+def toggle_notifications(_widget):
+    global NOTIFICATIONS
+    NOTIFICATIONS = not NOTIFICATIONS
+    os.makedirs(os.path.dirname(NOTIF_FILE), exist_ok=True)
+    with open(NOTIF_FILE, "w") as f:
+        f.write("1" if NOTIFICATIONS else "0")
+
 def provider_has_key(provider):
     return os.path.exists(_key_path(provider))
 
@@ -754,6 +772,10 @@ mt = Gtk.CheckMenuItem.new_with_label("Translate to English")
 mt.set_active(TRANSLATE)
 mt.connect("toggled", toggle_translate)
 menu.append(mt)
+mn = Gtk.CheckMenuItem.new_with_label("Show Notifications")
+mn.set_active(NOTIFICATIONS)
+mn.connect("toggled", toggle_notifications)
+menu.append(mn)
 qi = Gtk.MenuItem.new_with_label("Quit")
 qi.connect("activate", quit_app)
 menu.append(qi)
