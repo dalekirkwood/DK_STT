@@ -226,7 +226,7 @@ def ding():
                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 def snack(msg, icon="microphone"):
-    if not NOTIFICATIONS and icon != "dialog-error":
+    if not NOTIFICATIONS and icon not in ("dialog-error", "dialog-warning"):
         return
     n = Notify.Notification.new("STT" if not DEV else "STT DEV", msg, icon)
     n.set_timeout(2000)
