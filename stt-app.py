@@ -6,6 +6,9 @@ import time
 import signal
 import os
 import json
+import math
+import struct
+import wave
 import gi
 gi.require_version("Gtk", "3.0")
 gi.require_version("AppIndicator3", "0.1")
@@ -18,6 +21,7 @@ API_KEY = "iPMGv6F5sMwEOMjqGGtKQnMPjCA7EjYc"
 API_URL = "https://api.lemonfox.ai/v1/audio/transcriptions"
 AUDIO_FILE = "/tmp/stt-recording.wav"
 PID_FILE = "/tmp/stt-app.pid"
+BEEP_FILE = "/tmp/stt-beep.wav"
 
 recording = False
 processing = False
@@ -26,9 +30,23 @@ TYPETOOL = "wtype" if os.environ.get("XDG_SESSION_TYPE") == "wayland" else "xdot
 
 with open(PID_FILE, "w") as f:
     f.write(str(os.getpid()))
+gen_beep()
 
-def beep(sound):
-    subprocess.run(["canberra-gtk-play", "-i", sound], capture_output=True)
+def gen_beep():
+    rate, freq, dur = 44100, 800, 0.1
+    n = int(rate * dur)
+    data = struct.pack("<" + "h" * n, *(
+        int(32767 * math.sin(2 * math.pi * freq * i / rate)) for i in range(n)
+    ))
+    with wave.open(BEEP_FILE, "w") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(rate)
+        wf.writeframes(data)
+
+def ding():
+    subprocess.Popen(["paplay", BEEP_FILE],
+                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 def snack(msg, icon="microphone"):
     n = Notify.Notification.new("STT", msg, icon)
@@ -53,7 +71,7 @@ def start_record():
     global recording, arecord_proc
     recording = True
     update_ui()
-    beep("dialog-information")
+    ding()
     arecord_proc = subprocess.Popen(
         ["arecord", "-f", "S16_LE", "-r", "16000", "-c", "1", AUDIO_FILE],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -63,7 +81,7 @@ def stop_record():
     global recording, processing, arecord_proc
     recording = False
     update_ui()
-    beep("dialog-warning")
+    ding()
     if arecord_proc:
         arecord_proc.terminate()
         try:
@@ -124,6 +142,7 @@ def quit_app(*_args):
     if recording and arecord_proc:
         arecord_proc.terminate()
     os.unlink(PID_FILE)
+    os.unlink(BEEP_FILE)
     Notify.uninit()
     Gtk.main_quit()
 
