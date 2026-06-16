@@ -23,17 +23,69 @@ from gi.repository import Notify
 DEV = "--dev" in sys.argv
 SUFFIX = "-dev" if DEV else ""
 
-API_URL = "https://api.lemonfox.ai/v1/audio/transcriptions"
+PROVIDERS = [
+    ("lemonfox", "Lemon Fox (cheapest)"),
+    ("openai",   "OpenAI Whisper (best accuracy)"),
+    ("groq",     "Groq (fastest)"),
+    ("custom",   "Custom URL..."),
+]
+PROVIDER_URLS = {
+    "lemonfox": "https://api.lemonfox.ai/v1/audio/transcriptions",
+    "openai":   "https://api.openai.com/v1/audio/transcriptions",
+    "groq":     "https://api.groq.com/openai/v1/audio/transcriptions",
+    "custom":   "",  # stored in ~/.config/stt/custom-url
+}
+
 AUDIO_FILE = f"/tmp/stt{SUFFIX}-recording.wav"
 PID_FILE = f"/tmp/stt{SUFFIX}-app.pid"
 BEEP_FILE = f"/tmp/stt{SUFFIX}-beep.wav"
 ICON_IDLE = f"/tmp/stt{SUFFIX}-icon-idle.png"
 ICON_WARN = f"/tmp/stt{SUFFIX}-icon-warn.png"
 ICON_REC  = f"/tmp/stt{SUFFIX}-icon-rec.png"
-KEY_FILE = os.path.expanduser("~/.config/stt/key")
+PROVIDER_FILE = os.path.expanduser("~/.config/stt/provider")
 LANG_FILE = os.path.expanduser("~/.config/stt/language")
 TRANS_FILE = os.path.expanduser("~/.config/stt/translate")
 PROMPT_FILE = os.path.expanduser("~/.config/stt/prompt")
+CUSTOM_URL_FILE = os.path.expanduser("~/.config/stt/custom-url")
+OLD_KEY_FILE = os.path.expanduser("~/.config/stt/key")
+
+# ── provider + key ──
+def _key_path(provider=None):
+    if provider is None:
+        provider = PROVIDER
+    return os.path.expanduser(f"~/.config/stt/key.{provider}")
+
+def load_provider():
+    try:
+        return open(PROVIDER_FILE).read().strip()
+    except FileNotFoundError:
+        return "lemonfox"
+
+PROVIDER = load_provider()
+
+# one-time migration: old ~/.config/stt/key → key.lemonfox
+if os.path.exists(OLD_KEY_FILE) and not os.path.exists(_key_path("lemonfox")):
+    os.makedirs(os.path.dirname(OLD_KEY_FILE), exist_ok=True)
+    import shutil
+    shutil.copy(OLD_KEY_FILE, _key_path("lemonfox"))
+
+def load_key():
+    try:
+        return open(_key_path()).read().strip()
+    except FileNotFoundError:
+        return ""
+
+API_KEY = load_key()
+
+def get_api_url():
+    if PROVIDER == "custom":
+        try:
+            return open(CUSTOM_URL_FILE).read().strip()
+        except FileNotFoundError:
+            return ""
+    return PROVIDER_URLS.get(PROVIDER, PROVIDER_URLS["lemonfox"])
+
+API_URL = get_api_url()
 
 recording = False
 processing = False
@@ -43,15 +95,6 @@ spin_frame = 0
 SPIN_FRAMES = 8
 ICON_SPIN = [f"/tmp/stt{SUFFIX}-spin-{i}.png" for i in range(SPIN_FRAMES)]
 TYPETOOL = "wtype" if os.environ.get("XDG_SESSION_TYPE") == "wayland" else "xdotool"
-
-def load_key():
-    try:
-        with open(KEY_FILE) as f:
-            return f.read().strip()
-    except FileNotFoundError:
-        return ""
-
-API_KEY = load_key()
 
 def load_language():
     try:
@@ -199,7 +242,6 @@ def stop_record():
 def transcribe():
     global processing
     GLib.idle_add(lambda: snack("Transcribing..."))
-    time.sleep(0.3)
     if not API_KEY:
         GLib.idle_add(lambda: snack("No API key set — use tray menu", "dialog-error"))
         processing = False
@@ -301,7 +343,7 @@ def set_api_key(_widget):
     box.set_margin_bottom(12)
     box.set_margin_start(12)
     box.set_margin_end(12)
-    box.add(Gtk.Label(label="Lemon Fox API Key (lemonfox.ai)"))
+    box.add(Gtk.Label(label=f"API Key for {dict(PROVIDERS).get(PROVIDER, PROVIDER)}:"))
     entry = Gtk.Entry()
     entry.set_visibility(False)
     entry.set_placeholder_text("sk-...")
@@ -313,8 +355,8 @@ def set_api_key(_widget):
     if dialog.run() == Gtk.ResponseType.OK:
         key = entry.get_text().strip()
         if key:
-            os.makedirs(os.path.dirname(KEY_FILE), exist_ok=True)
-            with open(KEY_FILE, "w") as f:
+            os.makedirs(os.path.dirname(_key_path()), exist_ok=True)
+            with open(_key_path(), "w") as f:
                 f.write(key)
             global API_KEY
             API_KEY = key
@@ -360,6 +402,60 @@ def toggle_translate(_widget):
     with open(TRANS_FILE, "w") as f:
         f.write("1" if TRANSLATE else "0")
     snack(f"Translate to English: {'ON' if TRANSLATE else 'OFF'}", "dialog-information")
+
+def set_provider(_widget):
+    global PROVIDER, API_KEY, API_URL
+    dialog = Gtk.Dialog(title="Set Provider", buttons=(
+        Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
+        Gtk.STOCK_OK, Gtk.ResponseType.OK))
+    dialog.set_default_size(360, -1)
+    box = dialog.get_content_area()
+    box.set_spacing(6)
+    box.set_margin_top(12)
+    box.set_margin_bottom(12)
+    box.set_margin_start(12)
+    box.set_margin_end(12)
+    box.add(Gtk.Label(label="Speech-to-text provider:"))
+    combo = Gtk.ComboBoxText()
+    for i, (code, name) in enumerate(PROVIDERS):
+        combo.append(code, name)
+        if code == PROVIDER:
+            combo.set_active(i)
+    box.add(combo)
+    url_entry = Gtk.Entry()
+    url_entry.set_placeholder_text("https://api.example.com/v1/audio/transcriptions")
+    url_entry.set_visible(PROVIDER == "custom")
+    if PROVIDER == "custom":
+        try:
+            url_entry.set_text(open(CUSTOM_URL_FILE).read().strip())
+        except FileNotFoundError:
+            pass
+    box.add(url_entry)
+    def on_changed(cb):
+        url_entry.set_visible(cb.get_active_id() == "custom")
+        if cb.get_active_id() == "custom" and not url_entry.get_text():
+            try:
+                url_entry.set_text(open(CUSTOM_URL_FILE).read().strip())
+            except FileNotFoundError:
+                pass
+    combo.connect("changed", on_changed)
+    box.show_all()
+    if dialog.run() == Gtk.ResponseType.OK:
+        provider = combo.get_active_id()
+        os.makedirs(os.path.dirname(PROVIDER_FILE), exist_ok=True)
+        with open(PROVIDER_FILE, "w") as f:
+            f.write(provider)
+        if provider == "custom":
+            url = url_entry.get_text().strip()
+            if url:
+                with open(CUSTOM_URL_FILE, "w") as f:
+                    f.write(url)
+        PROVIDER = provider
+        API_KEY = load_key()
+        API_URL = get_api_url()
+        GLib.idle_add(update_ui)
+        snack(f"Provider: {dict(PROVIDERS).get(provider, provider)}", "dialog-information")
+    dialog.destroy()
 
 LANGUAGES = [
     ("auto", "Auto-detect (recommended)"),
@@ -515,6 +611,9 @@ toggle_item.connect("activate", on_toggle)
 menu = Gtk.Menu()
 menu.append(toggle_item)
 menu.append(Gtk.SeparatorMenuItem())
+mpv = Gtk.MenuItem.new_with_label("Set Provider...")
+mpv.connect("activate", set_provider)
+menu.append(mpv)
 mi_key = Gtk.MenuItem.new_with_label("Set API Key...")
 mi_key.connect("activate", set_api_key)
 menu.append(mi_key)
