@@ -38,6 +38,10 @@ PROMPT_FILE = os.path.expanduser("~/.config/stt/prompt")
 recording = False
 processing = False
 arecord_proc = None
+spin_id = 0
+spin_frame = 0
+SPIN_FRAMES = 8
+ICON_SPIN = [f"/tmp/stt{SUFFIX}-spin-{i}.png" for i in range(SPIN_FRAMES)]
 TYPETOOL = "wtype" if os.environ.get("XDG_SESSION_TYPE") == "wayland" else "xdotool"
 
 def load_key():
@@ -105,6 +109,23 @@ def gen_icons():
         ctx.set_operator(cairo.Operator.ATOP)
         ctx.paint()
         s.write_to_png(f"/tmp/stt{SUFFIX}-icon-{name}.png")
+    # spinner frames: orange mic + rotating white arc
+    for i in range(SPIN_FRAMES):
+        s = cairo.ImageSurface(cairo.FORMAT_ARGB32, 22, 22)
+        ctx = cairo.Context(s)
+        Gdk.cairo_set_source_pixbuf(ctx, pix, 0, 0)
+        ctx.paint()
+        ctx.set_source_rgb(0.92, 0.55, 0.15)
+        ctx.set_operator(cairo.Operator.ATOP)
+        ctx.paint()
+        ctx.set_operator(cairo.Operator.OVER)
+        ctx.set_source_rgba(1, 1, 1, 0.9)
+        ctx.set_line_width(1.8)
+        ctx.set_line_cap(cairo.LINE_CAP_ROUND)
+        start = (i * 2 * math.pi / SPIN_FRAMES) - math.pi / 2
+        ctx.arc(11, 11, 6.5, start, start + math.pi / 1.5)
+        ctx.stroke()
+        s.write_to_png(ICON_SPIN[i])
 
 def ding():
     subprocess.Popen(["paplay", BEEP_FILE],
@@ -115,28 +136,40 @@ def snack(msg, icon="microphone"):
     n.set_timeout(2000)
     n.show()
 
+def spin_tick():
+    global spin_frame
+    spin_frame = (spin_frame + 1) % SPIN_FRAMES
+    indicator.set_icon_full(ICON_SPIN[spin_frame], "")
+    return True
+
 def update_ui():
+    global spin_id
     dev = "DEV " if DEV else ""
     if processing:
         toggle_label.set_text("Processing...")
         toggle_item.set_sensitive(False)
-        indicator.set_icon_full(ICON_WARN, "")
+        if not spin_id:
+            spin_id = GLib.timeout_add(125, spin_tick)
         indicator.set_title(dev + "Processing...")
-    elif recording:
-        toggle_label.set_text("Stop Recording")
-        toggle_item.set_sensitive(True)
-        indicator.set_icon_full(ICON_REC, "")
-        indicator.set_title(dev + "Recording...")
-    elif API_KEY:
-        toggle_label.set_text("Start Recording")
-        toggle_item.set_sensitive(True)
-        indicator.set_icon_full(ICON_IDLE, "")
-        indicator.set_title(dev + "Ready — click or Alt+S")
     else:
-        toggle_label.set_text("Set API Key First")
-        toggle_item.set_sensitive(False)
-        indicator.set_icon_full(ICON_WARN, "")
-        indicator.set_title(dev + "No API key — use Set API Key")
+        if spin_id:
+            GLib.source_remove(spin_id)
+            spin_id = 0
+        if recording:
+            toggle_label.set_text("Stop Recording")
+            toggle_item.set_sensitive(True)
+            indicator.set_icon_full(ICON_REC, "")
+            indicator.set_title(dev + "Recording...")
+        elif API_KEY:
+            toggle_label.set_text("Start Recording")
+            toggle_item.set_sensitive(True)
+            indicator.set_icon_full(ICON_IDLE, "")
+            indicator.set_title(dev + "Ready — click or Alt+S")
+        else:
+            toggle_label.set_text("Set API Key First")
+            toggle_item.set_sensitive(False)
+            indicator.set_icon_full(ICON_WARN, "")
+            indicator.set_title(dev + "No API key — use Set API Key")
 
 def start_record():
     global recording, arecord_proc
@@ -172,22 +205,39 @@ def transcribe():
         processing = False
         GLib.idle_add(update_ui)
         return
+    MAX_RETRIES = 4
+    RETRY_DELAY = 6
     text = ""
-    try:
-        cmd = ["curl", "-s", API_URL,
-               "-H", f"Authorization: Bearer {API_KEY}",
-               "-F", f"file=@{AUDIO_FILE}",
-               "-F", "response_format=json"]
-        if LANGUAGE != "auto":
-            cmd += ["-F", f"language={LANGUAGE}"]
-        if TRANSLATE:
-            cmd += ["-F", "translate=true"]
-        if PROMPT:
-            cmd += ["-F", f"prompt={PROMPT}"]
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
-        text = json.loads(r.stdout).get("text", "")
-    except Exception as e:
-        GLib.idle_add(lambda: snack(f"API error: {e}", "dialog-error"))
+    cmd = ["curl", "-s", API_URL,
+           "-H", f"Authorization: Bearer {API_KEY}",
+           "-F", f"file=@{AUDIO_FILE}",
+           "-F", "response_format=json"]
+    if LANGUAGE != "auto":
+        cmd += ["-F", f"language={LANGUAGE}"]
+    if TRANSLATE:
+        cmd += ["-F", "translate=true"]
+    if PROMPT:
+        cmd += ["-F", f"prompt={PROMPT}"]
+    for attempt in range(1, MAX_RETRIES + 1):
+        if attempt > 1:
+            GLib.idle_add(lambda a=attempt: snack(
+                f"Retrying ({a}/{MAX_RETRIES})...", "emblem-synchronizing"))
+            time.sleep(RETRY_DELAY)
+        try:
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+            resp = json.loads(r.stdout)
+            if "error" in resp:
+                msg = resp["error"].get("message", str(resp["error"]))
+                GLib.idle_add(lambda m=msg: snack(f"API error: {m}", "dialog-error"))
+                break
+            text = resp.get("text", "")
+            if text:
+                break
+            break  # empty text — silent audio, don't retry
+        except Exception:
+            if attempt == MAX_RETRIES:
+                GLib.idle_add(lambda: snack(
+                    f"Failed after {MAX_RETRIES} attempts — check connection", "dialog-error"))
     if text:
         # clipboard as safety net (works on X11 + Wayland)
         clip = Gtk.Clipboard.get(Gdk.SELECTION_CLIPBOARD)
@@ -225,11 +275,17 @@ def on_signal(*_args):
     return True
 
 def quit_app(*_args):
+    global spin_id
+    if spin_id:
+        GLib.source_remove(spin_id)
+        spin_id = 0
     if recording and arecord_proc:
         arecord_proc.terminate()
     os.unlink(PID_FILE)
     os.unlink(BEEP_FILE)
     for f in (ICON_IDLE, ICON_WARN, ICON_REC):
+        os.unlink(f)
+    for f in ICON_SPIN:
         os.unlink(f)
     Notify.uninit()
     Gtk.main_quit()
