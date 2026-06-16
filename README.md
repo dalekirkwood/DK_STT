@@ -39,12 +39,15 @@ STT Type talks to a Whisper API to transcribe your speech. You need a key from
 | **Lemon Fox** | No card needed, generous limits | [lemonfox.ai/keys](https://lemonfox.ai/keys) |
 | **Groq** | No card needed, 2h audio/day | [console.groq.com/keys](https://console.groq.com/keys) |
 | **OpenAI** | Requires credit card | [platform.openai.com/api-keys](https://platform.openai.com/api-keys) |
+| **Local Whisper** | Free, no account, works offline | In-app: tray → Provider → Setup Local Whisper... |
 | **Custom URL** | Your own endpoint | Any OpenAI-compatible API |
 
-Lemon Fox is the default and works out of the box. If you want to switch
-providers later, right-click the tray icon → **Provider** → pick one.
+The default is Lemon Fox. For **zero-cost, zero-network** transcription, set up
+Local Whisper — it runs the model right on your machine. No API key, no
+internet needed after initial download.
 
-Keys live in `~/.config/stt/key.<provider>` — never hardcoded, never committed.
+Keys for API providers live in `~/.config/stt/key.<provider>`. Local Whisper
+needs no key.
 
 ## Usage
 
@@ -57,10 +60,13 @@ Right-click the tray icon for:
 | Menu item | What it does |
 |-----------|-------------|
 | Start/Stop Recording | Same as Alt+S |
-| Provider | Switch between Lemon Fox, OpenAI, Groq, Custom URL |
+| Provider | Switch between Lemon Fox, OpenAI, Groq, Local Whisper, Custom URL |
 | Language | 100+ languages, auto-converts format per provider |
 | Translate to English | After transcription, translate the result |
 | Set Prompt | Words/phrases to bias the transcription |
+| Set Dictionary | Custom vocabulary the AI might miss (jargon, names) |
+| Show Notifications | Toggle desktop notifications on/off (errors always show) |
+| Change Local Model | Pick model size (tiny/base/small/medium) for local Whisper |
 | Set API Key | Add or change your key |
 
 When you record:
@@ -73,12 +79,19 @@ When you record:
 
 ## Features
 
-- **4 providers** — Lemon Fox (cheapest), OpenAI (best accuracy), Groq
+- **Local Whisper** — run the model on your machine. Zero cost, zero network,
+  fully private. Choose from tiny (~75MB), base (~145MB, default), small
+  (~480MB), or medium (~1.5GB). One-click setup from the tray menu.
+- **4 cloud providers** — Lemon Fox (cheapest), OpenAI (best accuracy), Groq
   (fastest), or any custom OpenAI-compatible endpoint
 - **100+ languages** — auto-formats to full names or ISO codes depending on
   the provider
 - **Translate mode** — transcribe in any language, get English output
 - **Custom prompts** — bias recognition toward specific words or phrases
+- **Custom dictionary** — persistent vocabulary list (jargon, names) prepended
+  to every prompt automatically
+- **Notification control** — toggle desktop notifications on/off; errors and
+  warnings always show
 - **Clipboard fallback** — if `xdotool`/`wtype` can't type (some apps block
   it), the text goes to your clipboard
 - **X11 + Wayland** — detects your display server, uses the right typing tool
@@ -88,21 +101,40 @@ When you record:
 ## How It Works
 
 ```
- ┌─────────┐     ┌────────┐     ┌────────┐     ┌───────────┐
- │ Alt+S   │ ──→ │ arecord│ ──→ │ Whisper │ ──→ │ xdotool / │
- │ hotkey  │     │ 16kHz  │     │ API     │     │ wtype     │
- └─────────┘     │ mono   │     │ (curl)  │     └───────────┘
-                 └────────┘     └────────┘           │
-                  .wav file     POST + key      text at cursor
+ ┌─────────┐     ┌────────┐     ┌────────────────┐     ┌───────────┐
+ │ Alt+S   │ ──→ │ arecord│ ──→ │ Whisper API /  │ ──→ │ xdotool / │
+ │ hotkey  │     │ 16kHz  │     │ Local Whisper   │     │ wtype     │
+ └─────────┘     │ mono   │     └────────────────┘     └───────────┘
+                 └────────┘           │
+                  .wav file     text at cursor
 ```
 
 - Audio: 16kHz mono WAV recorded directly by `arecord`
-- Transcription: `POST` to the Whisper-compatible endpoint, retried up to 4
+- Cloud transcription: `POST` to the Whisper-compatible endpoint, retried up to 4
   times with exponential backoff
+- Local transcription: [faster-whisper](https://github.com/SYSTRAN/faster-whisper)
+  with CTranslate2 backend — 4x faster than openai-whisper on CPU, int8 quantized
 - Typing: `xdotool type` on X11, `wtype` on Wayland, clipboard fallback if
   both fail
 - Tray icon: colored mic — blue idle, red recording, orange spinner during
   API call
+
+### Local Whisper Setup
+
+1. Right-click tray → **Provider** → **Setup Local Whisper...**
+2. Pick a model size (base is recommended for most users)
+3. Click **Install** — pip installs [faster-whisper](https://github.com/SYSTRAN/faster-whisper)
+   and downloads the model (~145MB for base)
+4. Provider auto-switches to Local Whisper. You're ready.
+
+| Model | Size | Speed | Best for |
+|-------|------|-------|----------|
+| tiny | ~75MB | Instant | Quick notes in quiet rooms |
+| base | ~145MB | Very fast | Daily use — good accuracy |
+| small | ~480MB | Moderate | Noisy environments, accents |
+| medium | ~1.5GB | Slow (GPU recommended) | Near-API quality |
+
+Models stay cached in `~/.cache/huggingface/` — downloaded once, work offline forever.
 
 ## Config Files
 
@@ -110,11 +142,14 @@ Everything lives in `~/.config/stt/`. Nothing outside that directory.
 
 | File | Purpose |
 |------|---------|
-| `provider` | Active provider name: `lemonfox`, `openai`, `groq`, or `custom` |
+| `provider` | Active provider name: `lemonfox`, `openai`, `groq`, `local`, or `custom` |
 | `key.<provider>` | API key for that provider (e.g. `key.lemonfox`) |
 | `language` | Transcription language, lowercase full name (e.g. `english`, `japanese`) |
 | `translate` | `1` to translate output to English after transcription |
 | `prompt` | Optional text to bias recognition (names, jargon, etc.) |
+| `dictionary` | Custom vocabulary list, one word/term per line, prepended to every prompt |
+| `notifications` | `1` show desktop notifications, `0` errors/warnings only |
+| `local-model` | Model size for local Whisper: `tiny`, `base`, `small`, or `medium` |
 | `custom-url` | Custom API endpoint URL (only used when provider is `custom`) |
 
 ## Development

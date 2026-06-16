@@ -19,6 +19,12 @@ from gi.repository import Gtk, GLib, Gdk
 from gi.repository import AppIndicator3 as AppIndicator
 from gi.repository import Notify
 
+try:
+    from faster_whisper import WhisperModel
+    LOCAL_AVAILABLE = True
+except ImportError:
+    LOCAL_AVAILABLE = False
+
 # ponytail: --dev uses separate temp files so prod + dev run side-by-side
 DEV = "--dev" in sys.argv
 SUFFIX = "-dev" if DEV else ""
@@ -29,6 +35,7 @@ PROVIDERS = [
     ("groq",     "Groq (fastest)"),
     ("custom",   "Custom URL..."),
 ]
+PROVIDERS.append(("local", "Local Whisper (offline)"))
 PROVIDER_URLS = {
     "lemonfox": "https://api.lemonfox.ai/v1/audio/transcriptions",
     "openai":   "https://api.openai.com/v1/audio/transcriptions",
@@ -80,6 +87,7 @@ TRANS_FILE = os.path.expanduser("~/.config/stt/translate")
 PROMPT_FILE = os.path.expanduser("~/.config/stt/prompt")
 DICT_FILE = os.path.expanduser("~/.config/stt/dictionary")
 NOTIF_FILE = os.path.expanduser("~/.config/stt/notifications")
+LOCAL_MODEL_FILE = os.path.expanduser("~/.config/stt/local-model")
 CUSTOM_URL_FILE = os.path.expanduser("~/.config/stt/custom-url")
 OLD_KEY_FILE = os.path.expanduser("~/.config/stt/key")
 
@@ -173,6 +181,26 @@ def load_notifications():
 
 NOTIFICATIONS = load_notifications()
 
+def load_local_model_name():
+    try:
+        return open(LOCAL_MODEL_FILE).read().strip()
+    except FileNotFoundError:
+        return "base"
+
+_local_whisper_model = None
+_local_whisper_size = None
+
+def get_local_model():
+    global _local_whisper_model, _local_whisper_size
+    model_size = load_local_model_name()
+    if _local_whisper_model is not None and _local_whisper_size == model_size:
+        return _local_whisper_model
+    if _local_whisper_model is not None:
+        del _local_whisper_model
+    _local_whisper_model = WhisperModel(model_size, device="cpu", compute_type="int8")
+    _local_whisper_size = model_size
+    return _local_whisper_model
+
 with open(PID_FILE, "w") as f:
     f.write(str(os.getpid()))
 
@@ -256,7 +284,7 @@ def update_ui():
             toggle_item.set_sensitive(True)
             indicator.set_icon_full(ICON_REC, "")
             indicator.set_title(dev + "Recording...")
-        elif API_KEY:
+        elif API_KEY or PROVIDER == "local":
             toggle_label.set_text("Start Recording")
             toggle_item.set_sensitive(True)
             indicator.set_icon_full(ICON_IDLE, "")
@@ -292,9 +320,49 @@ def stop_record():
     update_ui()
     threading.Thread(target=transcribe, daemon=True).start()
 
+def _transcribe_local():
+    global processing
+    model = get_local_model()
+    language_code = LANGUAGE_ISO.get(LANGUAGE) if LANGUAGE != "auto" else None
+    prompt_text = DICTIONARY
+    if DICTIONARY and PROMPT:
+        prompt_text += "\n" + PROMPT
+    elif PROMPT:
+        prompt_text = PROMPT
+    try:
+        segments, info = model.transcribe(
+            AUDIO_FILE,
+            language=language_code,
+            initial_prompt=prompt_text or None,
+            beam_size=5,
+        )
+        text = " ".join(s.strip() for s in (seg.text for seg in segments)).strip()
+    except Exception as e:
+        GLib.idle_add(lambda: snack(f"Local Whisper: {e}", "dialog-error"))
+        processing = False
+        GLib.idle_add(update_ui)
+        return
+    if text:
+        clip = Gtk.Clipboard.get(Gdk.SELECTION_CLIPBOARD)
+        clip.set_text(text, -1)
+        prim = Gtk.Clipboard.get(Gdk.SELECTION_PRIMARY)
+        prim.set_text(text, -1)
+        if TYPETOOL == "wtype":
+            subprocess.run(["wtype", text])
+        else:
+            subprocess.run(["xdotool", "type", "--", text])
+        GLib.idle_add(lambda: snack("Typed!"))
+    else:
+        GLib.idle_add(lambda: snack("No speech detected", "dialog-warning"))
+    processing = False
+    GLib.idle_add(update_ui)
+
 def transcribe():
     global processing
     GLib.idle_add(lambda: snack("Transcribing..."))
+    if PROVIDER == "local":
+        _transcribe_local()
+        return
     if not API_KEY:
         GLib.idle_add(lambda: snack("No API key set — use tray menu", "dialog-error"))
         processing = False
@@ -362,7 +430,7 @@ def transcribe():
 
 def on_toggle(_widget):
     global recording, processing
-    if not API_KEY:
+    if not API_KEY and PROVIDER != "local":
         snack("Set API key first — use tray menu", "dialog-error")
         return
     if processing:
@@ -373,7 +441,7 @@ def on_toggle(_widget):
         stop_record()
 
 def on_signal(*_args):
-    if not API_KEY:
+    if not API_KEY and PROVIDER != "local":
         GLib.idle_add(lambda: snack("Set API key first — use tray menu", "dialog-error"))
         return True
     GLib.idle_add(on_toggle, None)
@@ -507,7 +575,103 @@ def toggle_notifications(_widget):
     with open(NOTIF_FILE, "w") as f:
         f.write("1" if NOTIFICATIONS else "0")
 
+# ponytail: local whisper models — only size label matters, faster-whisper handles the rest
+LOCAL_MODELS = [
+    ("tiny",   "tiny (~75MB, fastest)"),
+    ("base",   "base (~145MB, good)"),
+    ("small",  "small (~480MB, better)"),
+    ("medium", "medium (~1.5GB, best)"),
+]
+
+def setup_local_whisper(_widget=None):
+    dialog = Gtk.Dialog(title="Setup Local Whisper")
+    dialog.add_button("Install", Gtk.ResponseType.OK)
+    dialog.add_button(Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL)
+    dialog.set_default_size(400, -1)
+    box = dialog.get_content_area()
+    box.set_spacing(6)
+    box.set_margin_top(12)
+    box.set_margin_bottom(12)
+    box.set_margin_start(12)
+    box.set_margin_end(12)
+    box.add(Gtk.Label(label="Install faster-whisper for private, offline transcription."))
+    box.add(Gtk.Label(label="Model size:"))
+    combo = Gtk.ComboBoxText()
+    for code, name in LOCAL_MODELS:
+        combo.append(code, name)
+    combo.set_active(1)
+    box.add(combo)
+    note = Gtk.Label(label="Downloads model ~75MB-1.5GB. Requires internet only for setup.")
+    note.set_line_wrap(True)
+    box.add(note)
+    box.show_all()
+    if dialog.run() == Gtk.ResponseType.OK:
+        model_size = combo.get_active_id()
+        dialog.destroy()
+        GLib.idle_add(lambda: snack("Installing faster-whisper... (may take a minute)", "emblem-synchronizing"))
+        def _install():
+            try:
+                subprocess.run(
+                    [sys.executable, "-m", "pip", "install", "--user", "faster-whisper"],
+                    capture_output=True, text=True, timeout=180)
+                os.makedirs(os.path.dirname(LOCAL_MODEL_FILE), exist_ok=True)
+                with open(LOCAL_MODEL_FILE, "w") as f:
+                    f.write(model_size)
+                global LOCAL_AVAILABLE
+                try:
+                    from faster_whisper import WhisperModel
+                    LOCAL_AVAILABLE = True
+                except ImportError:
+                    GLib.idle_add(lambda: snack("pip install succeeded but import failed. Restart app.", "dialog-error"))
+                    return
+                _ = WhisperModel(model_size, device="cpu", compute_type="int8")
+                GLib.idle_add(refresh_provider_menu)
+                GLib.idle_add(lambda: local_model_item.set_visible(True))
+                GLib.idle_add(lambda: snack("Local Whisper ready!", "dialog-information"))
+                GLib.idle_add(lambda: switch_provider("local"))
+            except Exception as e:
+                GLib.idle_add(lambda: snack(f"Install failed: {e}. Try: pip3 install --user faster-whisper", "dialog-error"))
+        threading.Thread(target=_install, daemon=True).start()
+    else:
+        dialog.destroy()
+
+def set_local_model(_widget=None):
+    dialog = Gtk.Dialog(title="Change Local Model")
+    dialog.add_button("Switch", Gtk.ResponseType.OK)
+    dialog.add_button(Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL)
+    dialog.set_default_size(350, -1)
+    box = dialog.get_content_area()
+    box.set_spacing(6)
+    box.set_margin_top(12)
+    box.set_margin_bottom(12)
+    box.set_margin_start(12)
+    box.set_margin_end(12)
+    box.add(Gtk.Label(label="Select model (downloads on first use):"))
+    combo = Gtk.ComboBoxText()
+    current = load_local_model_name()
+    active_idx = 0
+    for i, (code, name) in enumerate(LOCAL_MODELS):
+        combo.append(code, name)
+        if code == current:
+            active_idx = i
+    combo.set_active(active_idx)
+    box.add(combo)
+    box.show_all()
+    if dialog.run() == Gtk.ResponseType.OK:
+        model_size = combo.get_active_id()
+        if model_size and model_size != current:
+            os.makedirs(os.path.dirname(LOCAL_MODEL_FILE), exist_ok=True)
+            with open(LOCAL_MODEL_FILE, "w") as f:
+                f.write(model_size)
+            global _local_whisper_model, _local_whisper_size
+            _local_whisper_model = None
+            _local_whisper_size = None
+            snack(f"Switched to {model_size} model. Download on next transcription.", "dialog-information")
+    dialog.destroy()
+
 def provider_has_key(provider):
+    if provider == "local":
+        return LOCAL_AVAILABLE
     return os.path.exists(_key_path(provider))
 
 def _custom_url_ready():
@@ -529,8 +693,9 @@ def switch_provider(provider, custom_url=None):
         os.makedirs(os.path.dirname(CUSTOM_URL_FILE), exist_ok=True)
         with open(CUSTOM_URL_FILE, "w") as f:
             f.write(custom_url)
-    API_KEY = load_key()
-    API_URL = get_api_url()
+    if provider != "local":
+        API_KEY = load_key()
+        API_URL = get_api_url()
     GLib.idle_add(update_ui)
     name = dict(PROVIDERS).get(provider, provider)
     snack(f"Switched to {name}", "dialog-information")
@@ -570,16 +735,23 @@ def refresh_provider_menu():
     for code, item in provider_items.items():
         name = dict(PROVIDERS).get(code, code)
         label = name
-        if provider_has_key(code):
+        if code == "local" and not LOCAL_AVAILABLE:
+            label = "Setup Local Whisper..."
+        elif provider_has_key(code):
             label += " ✓"
         item.set_label(label)
         item.set_active(code == PROVIDER)
+    local_model_item.set_visible(LOCAL_AVAILABLE)
     _refreshing = False
 
 def on_provider_activate(item, provider):
     if _refreshing or not item.get_active():
         return
     if provider == PROVIDER:
+        return
+    if provider == "local" and not LOCAL_AVAILABLE:
+        GLib.idle_add(setup_local_whisper)
+        GLib.idle_add(refresh_provider_menu)
         return
     switch_provider(provider)
 
@@ -776,6 +948,10 @@ mn = Gtk.CheckMenuItem.new_with_label("Show Notifications")
 mn.set_active(NOTIFICATIONS)
 mn.connect("toggled", toggle_notifications)
 menu.append(mn)
+local_model_item = Gtk.MenuItem.new_with_label("Change Local Model...")
+local_model_item.connect("activate", set_local_model)
+local_model_item.set_visible(LOCAL_AVAILABLE)
+menu.append(local_model_item)
 qi = Gtk.MenuItem.new_with_label("Quit")
 qi.connect("activate", quit_app)
 menu.append(qi)
