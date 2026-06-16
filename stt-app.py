@@ -37,7 +37,35 @@ PROVIDER_URLS = {
 }
 PROVIDER_MODEL = {
     "groq":     "whisper-large-v3-turbo",
-    # lemonfox & openai auto-select model, no param needed
+}
+# Groq & OpenAI need ISO-639-1 codes; Lemon Fox uses full names
+LANGUAGE_ISO = {
+    "english": "en", "chinese": "zh", "spanish": "es", "french": "fr",
+    "german": "de", "portuguese": "pt", "russian": "ru", "japanese": "ja",
+    "korean": "ko", "arabic": "ar", "hindi": "hi", "italian": "it",
+    "dutch": "nl", "turkish": "tr", "polish": "pl", "swedish": "sv",
+    "vietnamese": "vi", "thai": "th", "hebrew": "he", "greek": "el",
+    "catalan": "ca", "indonesian": "id", "finnish": "fi", "ukrainian": "uk",
+    "malay": "ms", "czech": "cs", "romanian": "ro", "danish": "da",
+    "hungarian": "hu", "tamil": "ta", "norwegian": "no", "urdu": "ur",
+    "croatian": "hr", "bulgarian": "bg", "lithuanian": "lt", "latin": "la",
+    "maori": "mi", "malayalam": "ml", "welsh": "cy", "slovak": "sk",
+    "telugu": "te", "persian": "fa", "latvian": "lv", "bengali": "bn",
+    "serbian": "sr", "azerbaijani": "az", "slovenian": "sl", "kannada": "kn",
+    "estonian": "et", "macedonian": "mk", "breton": "br", "basque": "eu",
+    "icelandic": "is", "armenian": "hy", "nepali": "ne", "mongolian": "mn",
+    "bosnian": "bs", "kazakh": "kk", "albanian": "sq", "swahili": "sw",
+    "galician": "gl", "marathi": "mr", "punjabi": "pa", "sinhala": "si",
+    "khmer": "km", "shona": "sn", "yoruba": "yo", "somali": "so",
+    "afrikaans": "af", "occitan": "oc", "georgian": "ka", "belarusian": "be",
+    "tajik": "tg", "sindhi": "sd", "gujarati": "gu", "amharic": "am",
+    "yiddish": "yi", "lao": "lo", "uzbek": "uz", "faroese": "fo",
+    "haitian creole": "ht", "pashto": "ps", "turkmen": "tk", "nynorsk": "nn",
+    "maltese": "mt", "sanskrit": "sa", "luxembourgish": "lb", "myanmar": "my",
+    "tibetan": "bo", "tagalog": "tl", "malagasy": "mg", "assamese": "as",
+    "tatar": "tt", "hawaiian": "haw", "lingala": "ln", "hausa": "ha",
+    "bashkir": "ba", "javanese": "jv", "sundanese": "su", "cantonese": "yue",
+    "burmese": "my", "valencian": "ca", "flemish": "nl",
 }
 
 AUDIO_FILE = f"/tmp/stt{SUFFIX}-recording.wav"
@@ -259,8 +287,10 @@ def transcribe():
            "-F", f"file=@{AUDIO_FILE}",
            "-F", "response_format=json"]
     if LANGUAGE != "auto":
-        cmd += ["-F", f"language={LANGUAGE}"]
-    if TRANSLATE:
+        code = LANGUAGE_ISO.get(LANGUAGE, "") if PROVIDER in ("groq", "openai") else LANGUAGE
+        if code:
+            cmd += ["-F", f"language={code}"]
+    if TRANSLATE and PROVIDER != "groq":
         cmd += ["-F", "translate=true"]
     if PROMPT:
         cmd += ["-F", f"prompt={PROMPT}"]
