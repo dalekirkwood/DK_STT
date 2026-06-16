@@ -78,6 +78,7 @@ PROVIDER_FILE = os.path.expanduser("~/.config/stt/provider")
 LANG_FILE = os.path.expanduser("~/.config/stt/language")
 TRANS_FILE = os.path.expanduser("~/.config/stt/translate")
 PROMPT_FILE = os.path.expanduser("~/.config/stt/prompt")
+DICT_FILE = os.path.expanduser("~/.config/stt/dictionary")
 CUSTOM_URL_FILE = os.path.expanduser("~/.config/stt/custom-url")
 OLD_KEY_FILE = os.path.expanduser("~/.config/stt/key")
 
@@ -153,6 +154,15 @@ def load_prompt():
         return ""
 
 PROMPT = load_prompt()
+
+def load_dictionary():
+    try:
+        with open(DICT_FILE) as f:
+            return f.read().strip()
+    except FileNotFoundError:
+        return ""
+
+DICTIONARY = load_dictionary()
 
 with open(PID_FILE, "w") as f:
     f.write(str(os.getpid()))
@@ -292,8 +302,14 @@ def transcribe():
             cmd += ["-F", f"language={code}"]
     if TRANSLATE and PROVIDER != "groq":
         cmd += ["-F", "translate=true"]
-    if PROMPT:
-        cmd += ["-F", f"prompt={PROMPT}"]
+    # ponytail: dictionary words + prompt concatenated into one prompt param
+    prompt_text = DICTIONARY
+    if DICTIONARY and PROMPT:
+        prompt_text += "\n" + PROMPT
+    elif PROMPT:
+        prompt_text = PROMPT
+    if prompt_text:
+        cmd += ["-F", f"prompt={prompt_text}"]
     if PROVIDER in PROVIDER_MODEL:
         cmd += ["-F", f"model={PROVIDER_MODEL[PROVIDER]}"]
     for attempt in range(1, MAX_RETRIES + 1):
@@ -429,6 +445,40 @@ def set_prompt(_widget):
         global PROMPT
         PROMPT = text
         snack("Prompt saved" if text else "Prompt cleared", "dialog-information")
+    dialog.destroy()
+
+def set_dictionary(_widget):
+    dialog = Gtk.Dialog(title="Set Dictionary", buttons=(
+        Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
+        Gtk.STOCK_OK, Gtk.ResponseType.OK))
+    dialog.set_default_size(420, 200)
+    box = dialog.get_content_area()
+    box.set_spacing(6)
+    box.set_margin_top(12)
+    box.set_margin_bottom(12)
+    box.set_margin_start(12)
+    box.set_margin_end(12)
+    box.add(Gtk.Label(label="Custom vocabulary — words the AI might miss (one per line):"))
+    scroll = Gtk.ScrolledWindow()
+    scroll.set_min_content_height(80)
+    tv = Gtk.TextView()
+    tv.set_wrap_mode(Gtk.WrapMode.WORD)
+    tv.get_buffer().set_text(load_dictionary())
+    scroll.add(tv)
+    box.add(scroll)
+    warn = Gtk.Label(label="Note: Groq limits prompts to 224 tokens (~160 words). Dictionary + prompt share this limit.")
+    warn.set_line_wrap(True)
+    box.add(warn)
+    box.show_all()
+    if dialog.run() == Gtk.ResponseType.OK:
+        buf = tv.get_buffer()
+        text = buf.get_text(buf.get_start_iter(), buf.get_end_iter(), True).strip()
+        os.makedirs(os.path.dirname(DICT_FILE), exist_ok=True)
+        with open(DICT_FILE, "w") as f:
+            f.write(text)
+        global DICTIONARY
+        DICTIONARY = text
+        snack("Dictionary saved" if text else "Dictionary cleared", "dialog-information")
     dialog.destroy()
 
 def toggle_translate(_widget):
@@ -697,6 +747,9 @@ menu.append(ml)
 mp = Gtk.MenuItem.new_with_label("Set Prompt...")
 mp.connect("activate", set_prompt)
 menu.append(mp)
+md = Gtk.MenuItem.new_with_label("Set Dictionary...")
+md.connect("activate", set_dictionary)
+menu.append(md)
 mt = Gtk.CheckMenuItem.new_with_label("Translate to English")
 mt.set_active(TRANSLATE)
 mt.connect("toggled", toggle_translate)
