@@ -38,6 +38,12 @@ fi
 if [ ! -f "$HOME/.config/stt/language" ]; then
     echo "english" > "$HOME/.config/stt/language"
 fi
+if [ ! -f "$HOME/.config/stt/translate" ]; then
+    echo "0" > "$HOME/.config/stt/translate"
+fi
+if [ ! -f "$HOME/.config/stt/prompt" ]; then
+    touch "$HOME/.config/stt/prompt"
+fi
 
 # ── copy ──
 echo "[4/7] Installing files..."

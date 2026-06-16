@@ -32,6 +32,8 @@ ICON_WARN = f"/tmp/stt{SUFFIX}-icon-warn.png"
 ICON_REC  = f"/tmp/stt{SUFFIX}-icon-rec.png"
 KEY_FILE = os.path.expanduser("~/.config/stt/key")
 LANG_FILE = os.path.expanduser("~/.config/stt/language")
+TRANS_FILE = os.path.expanduser("~/.config/stt/translate")
+PROMPT_FILE = os.path.expanduser("~/.config/stt/prompt")
 
 recording = False
 processing = False
@@ -55,6 +57,23 @@ def load_language():
         return "english"
 
 LANGUAGE = load_language()
+
+def load_translate():
+    try:
+        return open(TRANS_FILE).read().strip() == "1"
+    except FileNotFoundError:
+        return False
+
+TRANSLATE = load_translate()
+
+def load_prompt():
+    try:
+        with open(PROMPT_FILE) as f:
+            return f.read().strip()
+    except FileNotFoundError:
+        return ""
+
+PROMPT = load_prompt()
 
 with open(PID_FILE, "w") as f:
     f.write(str(os.getpid()))
@@ -161,6 +180,10 @@ def transcribe():
                "-F", "response_format=json"]
         if LANGUAGE != "auto":
             cmd += ["-F", f"language={LANGUAGE}"]
+        if TRANSLATE:
+            cmd += ["-F", "translate=true"]
+        if PROMPT:
+            cmd += ["-F", f"prompt={PROMPT}"]
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
         text = json.loads(r.stdout).get("text", "")
     except Exception as e:
@@ -243,6 +266,45 @@ def set_api_key(_widget):
             snack("API key saved", "dialog-information")
     dialog.destroy()
 
+def set_prompt(_widget):
+    dialog = Gtk.Dialog(title="Set Prompt", buttons=(
+        Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
+        Gtk.STOCK_OK, Gtk.ResponseType.OK))
+    dialog.set_default_size(420, 160)
+    box = dialog.get_content_area()
+    box.set_spacing(6)
+    box.set_margin_top(12)
+    box.set_margin_bottom(12)
+    box.set_margin_start(12)
+    box.set_margin_end(12)
+    box.add(Gtk.Label(label="Prompt text (words/names/punctuation to guide transcription):"))
+    scroll = Gtk.ScrolledWindow()
+    scroll.set_min_content_height(80)
+    tv = Gtk.TextView()
+    tv.set_wrap_mode(Gtk.WrapMode.WORD)
+    tv.get_buffer().set_text(load_prompt())
+    scroll.add(tv)
+    box.add(scroll)
+    box.show_all()
+    if dialog.run() == Gtk.ResponseType.OK:
+        buf = tv.get_buffer()
+        text = buf.get_text(buf.get_start_iter(), buf.get_end_iter(), True).strip()
+        os.makedirs(os.path.dirname(PROMPT_FILE), exist_ok=True)
+        with open(PROMPT_FILE, "w") as f:
+            f.write(text)
+        global PROMPT
+        PROMPT = text
+        snack("Prompt saved" if text else "Prompt cleared", "dialog-information")
+    dialog.destroy()
+
+def toggle_translate(_widget):
+    global TRANSLATE
+    TRANSLATE = not TRANSLATE
+    os.makedirs(os.path.dirname(TRANS_FILE), exist_ok=True)
+    with open(TRANS_FILE, "w") as f:
+        f.write("1" if TRANSLATE else "0")
+    snack(f"Translate to English: {'ON' if TRANSLATE else 'OFF'}", "dialog-information")
+
 LANGUAGES = [
     ("auto", "Auto-detect (recommended)"),
     ("english", "English"),
@@ -265,6 +327,89 @@ LANGUAGES = [
     ("thai", "Thai"),
     ("hebrew", "Hebrew"),
     ("greek", "Greek"),
+    ("catalan", "Catalan"),
+    ("indonesian", "Indonesian"),
+    ("finnish", "Finnish"),
+    ("ukrainian", "Ukrainian"),
+    ("malay", "Malay"),
+    ("czech", "Czech"),
+    ("romanian", "Romanian"),
+    ("danish", "Danish"),
+    ("hungarian", "Hungarian"),
+    ("tamil", "Tamil"),
+    ("norwegian", "Norwegian"),
+    ("urdu", "Urdu"),
+    ("croatian", "Croatian"),
+    ("bulgarian", "Bulgarian"),
+    ("lithuanian", "Lithuanian"),
+    ("latin", "Latin"),
+    ("maori", "Maori"),
+    ("malayalam", "Malayalam"),
+    ("welsh", "Welsh"),
+    ("slovak", "Slovak"),
+    ("telugu", "Telugu"),
+    ("persian", "Persian"),
+    ("latvian", "Latvian"),
+    ("bengali", "Bengali"),
+    ("serbian", "Serbian"),
+    ("azerbaijani", "Azerbaijani"),
+    ("slovenian", "Slovenian"),
+    ("kannada", "Kannada"),
+    ("estonian", "Estonian"),
+    ("macedonian", "Macedonian"),
+    ("breton", "Breton"),
+    ("basque", "Basque"),
+    ("icelandic", "Icelandic"),
+    ("armenian", "Armenian"),
+    ("nepali", "Nepali"),
+    ("mongolian", "Mongolian"),
+    ("bosnian", "Bosnian"),
+    ("kazakh", "Kazakh"),
+    ("albanian", "Albanian"),
+    ("swahili", "Swahili"),
+    ("galician", "Galician"),
+    ("marathi", "Marathi"),
+    ("punjabi", "Punjabi"),
+    ("sinhala", "Sinhala"),
+    ("khmer", "Khmer"),
+    ("shona", "Shona"),
+    ("yoruba", "Yoruba"),
+    ("somali", "Somali"),
+    ("afrikaans", "Afrikaans"),
+    ("occitan", "Occitan"),
+    ("georgian", "Georgian"),
+    ("belarusian", "Belarusian"),
+    ("tajik", "Tajik"),
+    ("sindhi", "Sindhi"),
+    ("gujarati", "Gujarati"),
+    ("amharic", "Amharic"),
+    ("yiddish", "Yiddish"),
+    ("lao", "Lao"),
+    ("uzbek", "Uzbek"),
+    ("faroese", "Faroese"),
+    ("haitian creole", "Haitian Creole"),
+    ("pashto", "Pashto"),
+    ("turkmen", "Turkmen"),
+    ("nynorsk", "Nynorsk"),
+    ("maltese", "Maltese"),
+    ("sanskrit", "Sanskrit"),
+    ("luxembourgish", "Luxembourgish"),
+    ("myanmar", "Myanmar"),
+    ("tibetan", "Tibetan"),
+    ("tagalog", "Tagalog"),
+    ("malagasy", "Malagasy"),
+    ("assamese", "Assamese"),
+    ("tatar", "Tatar"),
+    ("hawaiian", "Hawaiian"),
+    ("lingala", "Lingala"),
+    ("hausa", "Hausa"),
+    ("bashkir", "Bashkir"),
+    ("javanese", "Javanese"),
+    ("sundanese", "Sundanese"),
+    ("cantonese", "Cantonese"),
+    ("burmese", "Burmese"),
+    ("valencian", "Valencian"),
+    ("flemish", "Flemish"),
 ]
 
 def set_language(_widget):
@@ -320,6 +465,13 @@ menu.append(mi_key)
 ml = Gtk.MenuItem.new_with_label("Set Language...")
 ml.connect("activate", set_language)
 menu.append(ml)
+mp = Gtk.MenuItem.new_with_label("Set Prompt...")
+mp.connect("activate", set_prompt)
+menu.append(mp)
+mt = Gtk.CheckMenuItem.new_with_label("Translate to English")
+mt.set_active(TRANSLATE)
+mt.connect("toggled", toggle_translate)
+menu.append(mt)
 qi = Gtk.MenuItem.new_with_label("Quit")
 qi.connect("activate", quit_app)
 menu.append(qi)
