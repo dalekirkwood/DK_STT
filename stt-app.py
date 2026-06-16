@@ -30,7 +30,6 @@ TYPETOOL = "wtype" if os.environ.get("XDG_SESSION_TYPE") == "wayland" else "xdot
 
 with open(PID_FILE, "w") as f:
     f.write(str(os.getpid()))
-gen_beep()
 
 def gen_beep():
     rate, freq, dur = 44100, 800, 0.1
@@ -167,6 +166,8 @@ menu.show_all()
 indicator.set_menu(menu)
 
 update_ui()
+
+gen_beep()
 
 GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, signal.SIGUSR1, on_signal)
 
