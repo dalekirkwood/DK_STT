@@ -403,59 +403,81 @@ def toggle_translate(_widget):
         f.write("1" if TRANSLATE else "0")
     snack(f"Translate to English: {'ON' if TRANSLATE else 'OFF'}", "dialog-information")
 
-def set_provider(_widget):
+def provider_has_key(provider):
+    return os.path.exists(_key_path(provider))
+
+def _custom_url_ready():
+    try:
+        return bool(open(CUSTOM_URL_FILE).read().strip())
+    except FileNotFoundError:
+        return False
+
+def switch_provider(provider, custom_url=None):
     global PROVIDER, API_KEY, API_URL
-    dialog = Gtk.Dialog(title="Set Provider", buttons=(
+    if provider == "custom" and not _custom_url_ready() and not custom_url:
+        prompt_custom_url(provider)
+        return
+    PROVIDER = provider
+    os.makedirs(os.path.dirname(PROVIDER_FILE), exist_ok=True)
+    with open(PROVIDER_FILE, "w") as f:
+        f.write(provider)
+    if custom_url:
+        os.makedirs(os.path.dirname(CUSTOM_URL_FILE), exist_ok=True)
+        with open(CUSTOM_URL_FILE, "w") as f:
+            f.write(custom_url)
+    API_KEY = load_key()
+    API_URL = get_api_url()
+    GLib.idle_add(update_ui)
+    name = dict(PROVIDERS).get(provider, provider)
+    snack(f"Switched to {name}", "dialog-information")
+
+def prompt_custom_url(for_provider="custom"):
+    dialog = Gtk.Dialog(title="Custom Provider URL", buttons=(
         Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
         Gtk.STOCK_OK, Gtk.ResponseType.OK))
-    dialog.set_default_size(360, -1)
+    dialog.set_default_size(420, -1)
     box = dialog.get_content_area()
     box.set_spacing(6)
     box.set_margin_top(12)
     box.set_margin_bottom(12)
     box.set_margin_start(12)
     box.set_margin_end(12)
-    box.add(Gtk.Label(label="Speech-to-text provider:"))
-    combo = Gtk.ComboBoxText()
-    for i, (code, name) in enumerate(PROVIDERS):
-        combo.append(code, name)
-        if code == PROVIDER:
-            combo.set_active(i)
-    box.add(combo)
-    url_entry = Gtk.Entry()
-    url_entry.set_placeholder_text("https://api.example.com/v1/audio/transcriptions")
-    url_entry.set_visible(PROVIDER == "custom")
-    if PROVIDER == "custom":
-        try:
-            url_entry.set_text(open(CUSTOM_URL_FILE).read().strip())
-        except FileNotFoundError:
-            pass
-    box.add(url_entry)
-    def on_changed(cb):
-        url_entry.set_visible(cb.get_active_id() == "custom")
-        if cb.get_active_id() == "custom" and not url_entry.get_text():
-            try:
-                url_entry.set_text(open(CUSTOM_URL_FILE).read().strip())
-            except FileNotFoundError:
-                pass
-    combo.connect("changed", on_changed)
+    box.add(Gtk.Label(label="API endpoint (OpenAI-compatible):"))
+    entry = Gtk.Entry()
+    entry.set_placeholder_text("https://api.example.com/v1/audio/transcriptions")
+    if _custom_url_ready():
+        entry.set_text(open(CUSTOM_URL_FILE).read().strip())
+    box.add(entry)
     box.show_all()
     if dialog.run() == Gtk.ResponseType.OK:
-        provider = combo.get_active_id()
-        os.makedirs(os.path.dirname(PROVIDER_FILE), exist_ok=True)
-        with open(PROVIDER_FILE, "w") as f:
-            f.write(provider)
-        if provider == "custom":
-            url = url_entry.get_text().strip()
-            if url:
-                with open(CUSTOM_URL_FILE, "w") as f:
-                    f.write(url)
-        PROVIDER = provider
-        API_KEY = load_key()
-        API_URL = get_api_url()
-        GLib.idle_add(update_ui)
-        snack(f"Provider: {dict(PROVIDERS).get(provider, provider)}", "dialog-information")
+        url = entry.get_text().strip()
+        if url:
+            switch_provider(for_provider, custom_url=url)
+    else:
+        # cancelled — reset radio to previous provider
+        GLib.idle_add(refresh_provider_menu)
     dialog.destroy()
+
+_refreshing = False
+
+def refresh_provider_menu():
+    global _refreshing
+    _refreshing = True
+    for code, item in provider_items.items():
+        name = dict(PROVIDERS).get(code, code)
+        label = name
+        if provider_has_key(code):
+            label += " ✓"
+        item.set_label(label)
+        item.set_active(code == PROVIDER)
+    _refreshing = False
+
+def on_provider_activate(item, provider):
+    if _refreshing or not item.get_active():
+        return
+    if provider == PROVIDER:
+        return
+    switch_provider(provider)
 
 LANGUAGES = [
     ("auto", "Auto-detect (recommended)"),
@@ -611,9 +633,23 @@ toggle_item.connect("activate", on_toggle)
 menu = Gtk.Menu()
 menu.append(toggle_item)
 menu.append(Gtk.SeparatorMenuItem())
-mpv = Gtk.MenuItem.new_with_label("Set Provider...")
-mpv.connect("activate", set_provider)
-menu.append(mpv)
+
+provider_items = {}
+providers_menu = Gtk.Menu()
+for code, name in PROVIDERS:
+    label = name
+    if provider_has_key(code):
+        label += " ✓"
+    item = Gtk.RadioMenuItem.new_with_label([], label)
+    item.set_active(code == PROVIDER)
+    item.connect("toggled", on_provider_activate, code)
+    providers_menu.append(item)
+    provider_items[code] = item
+providers_menu.show_all()
+provider_menu_item = Gtk.MenuItem.new_with_label("Provider")
+provider_menu_item.set_submenu(providers_menu)
+menu.append(provider_menu_item)
+
 mi_key = Gtk.MenuItem.new_with_label("Set API Key...")
 mi_key.connect("activate", set_api_key)
 menu.append(mi_key)
