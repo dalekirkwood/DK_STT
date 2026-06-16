@@ -308,7 +308,7 @@ def transcribe():
                 msg = resp["error"].get("message", str(resp["error"]))
                 GLib.idle_add(lambda m=msg: snack(f"API error: {m}", "dialog-error"))
                 break
-            text = resp.get("text", "")
+            text = resp.get("text", "").strip()
             if text:
                 break
             break  # empty text — silent audio, don't retry
