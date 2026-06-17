@@ -991,11 +991,13 @@ menu.append(qi)
 menu.show_all()
 indicator.set_menu(menu)
 
-update_ui()
-
 gen_icons()
 gen_beep()
 
+update_ui()
+
 GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, signal.SIGUSR1, on_signal)
+
+snack("STT ready — Alt+S to toggle", "dialog-information")
 
 Gtk.main()

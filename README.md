@@ -29,6 +29,10 @@ The installer:
 
 A microphone icon appears in your tray. You're ready.
 
+> **GNOME 50 (Ubuntu 26.04)**: GNOME doesn't show tray icons by default. Install
+> the [Status Tray extension](https://extensions.gnome.org/extension/9164/) or
+> `sudo apt install gnome-shell-extension-manager` and enable it, then log out/in.
+
 ## Get an API Key
 
 STT Type talks to a Whisper API to transcribe your speech. You need a key from

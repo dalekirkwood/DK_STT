@@ -87,8 +87,31 @@ case "$XDG_CURRENT_DESKTOP" in
         echo "  Cinnamon: Alt+S → stt"
         ;;
     *[Gg][Nn][Oo][Mm][Ee]*)
-        echo "  GNOME: open Settings → Keyboard → Custom Shortcuts:"
-        echo "    Name: STT Toggle  |  Command: stt  |  Key: Alt+S"
+        # GNOME custom keybinding via gsettings
+        KPATH="/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/stt-toggle/"
+        EXISTING=$(gsettings get org.gnome.settings-daemon.plugins.media-keys custom-keybindings 2>/dev/null || true)
+        if ! echo "$EXISTING" | grep -q "stt-toggle"; then
+            if [ "$EXISTING" = "@as []" ]; then
+                gsettings set org.gnome.settings-daemon.plugins.media-keys custom-keybindings "['${KPATH}']"
+            else
+                NEW=$(echo "$EXISTING" | sed "s|\]$|, '${KPATH}']|")
+                gsettings set org.gnome.settings-daemon.plugins.media-keys custom-keybindings "$NEW"
+            fi
+            gsettings set "org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:${KPATH}" name 'STT Toggle'
+            gsettings set "org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:${KPATH}" command 'stt'
+            gsettings set "org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:${KPATH}" binding '<Alt>s'
+            echo "  GNOME: Alt+S → stt"
+        else
+            echo "  GNOME: Alt+S shortcut already exists"
+        fi
+        # tray extension check — GNOME 50 needs one
+        if ! gnome-extensions list --enabled 2>/dev/null | grep -qiE 'appindicator|status-tray|tray-icons'; then
+            echo ""
+            echo "  ⚠  GNOME needs a tray icon extension to show the mic icon:"
+            echo "     Install 'Status Tray' → https://extensions.gnome.org/extension/9164/"
+            echo "     Or: sudo apt install gnome-shell-extension-manager"
+            echo "     Then log out and back in."
+        fi
         ;;
     *)
         echo "  Map Alt+S in your DE settings to run:  stt"
