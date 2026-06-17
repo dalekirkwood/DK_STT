@@ -11,9 +11,13 @@ echo "=== STT Type Installer ==="
 
 # ── deps ──
 echo "[1/7] Installing apt dependencies..."
-sudo apt install -y python3-gi gir1.2-appindicator3-0.1 gir1.2-notify-0.7 xdotool curl
+sudo apt install -y python3-gi gir1.2-appindicator3-0.1 gir1.2-notify-0.7 xdotool curl alsa-utils
 if [ "$XDG_SESSION_TYPE" = "wayland" ]; then
-    sudo apt install -y wtype 2>/dev/null || true
+    sudo apt install -y wtype ydotool wl-clipboard 2>/dev/null || true
+    sudo usermod -aG input "$USER" 2>/dev/null || true
+    sudo udevadm control --reload-rules 2>/dev/null || true
+    sudo udevadm trigger --sysname-match=uinput 2>/dev/null || true
+    systemctl --user enable --now ydotool.service 2>/dev/null || true
 fi
 
 # ── dirs ──
@@ -46,6 +50,10 @@ if [ ! -f "$HOME/.config/stt/translate" ]; then
 fi
 if [ ! -f "$HOME/.config/stt/prompt" ]; then
     touch "$HOME/.config/stt/prompt"
+fi
+# migrate old key file to new per-provider format
+if [ -f "$HOME/.config/stt/key" ] && [ ! -f "$HOME/.config/stt/key.lemonfox" ]; then
+    cp "$HOME/.config/stt/key" "$HOME/.config/stt/key.lemonfox"
 fi
 
 # ── copy ──
@@ -133,3 +141,9 @@ echo "  Alt+S        — toggle recording"
 echo "  stt           — toggle from terminal"
 echo "  Tray menu     — Start/Stop Recording, Set API Key..."
 echo "  App menu     — search 'STT Type' in launcher"
+if [ "$XDG_SESSION_TYPE" = "wayland" ]; then
+    echo ""
+    echo "  Wayland: ydotool + wl-clipboard installed for typing."
+    echo "  If typing doesn't work, LOG OUT AND BACK IN (input group)."
+    echo "  Wrong microphone? Run 'pavucontrol' → Input Devices to switch."
+fi

@@ -5,6 +5,7 @@ import threading
 import time
 import signal
 import os
+import shutil
 import json
 import math
 import struct
@@ -108,7 +109,6 @@ PROVIDER = load_provider()
 # one-time migration: old ~/.config/stt/key → key.lemonfox
 if os.path.exists(OLD_KEY_FILE) and not os.path.exists(_key_path("lemonfox")):
     os.makedirs(os.path.dirname(OLD_KEY_FILE), exist_ok=True)
-    import shutil
     shutil.copy(OLD_KEY_FILE, _key_path("lemonfox"))
 
 def load_key():
@@ -136,7 +136,60 @@ spin_id = 0
 spin_frame = 0
 SPIN_FRAMES = 8
 ICON_SPIN = [f"/tmp/stt{SUFFIX}-spin-{i}.png" for i in range(SPIN_FRAMES)]
-TYPETOOL = "wtype" if os.environ.get("XDG_SESSION_TYPE") == "wayland" else "xdotool"
+# ponytail: try ydotool → wtype → xdotool → clipboard-only
+_TYPE_CANDIDATES = [
+    (["ydotool", "type"]),           # GNOME Wayland via uinput (needs ydotoold)
+    (["wtype", "-"]),                # wlroots compositors
+    (["wtype"]),                     # wtype args fallback
+    (["xdotool", "type", "--"]),     # X11
+]
+def _type_text(text):
+    for args in _TYPE_CANDIDATES:
+        if not shutil.which(args[0]):
+            continue
+        try:
+            if args[-1] == "-":
+                subprocess.run(args, input=text, text=True, timeout=10)
+            else:
+                subprocess.run(args + [text], timeout=10)
+            return True
+        except Exception:
+            continue
+    return False
+
+# ponytail: GTK clipboard needs a surface on Wayland — use wl-copy/xclip instead
+if shutil.which("wl-copy"):
+    def _set_clipboard(text):
+        subprocess.run(["wl-copy"], input=text, text=True, timeout=5)
+    def _set_primary(text):
+        subprocess.run(["wl-copy", "--primary"], input=text, text=True, timeout=5)
+elif shutil.which("xclip"):
+    def _set_clipboard(text):
+        subprocess.run(["xclip", "-i", "-selection", "clipboard"], input=text, text=True, timeout=5)
+    def _set_primary(text):
+        subprocess.run(["xclip", "-i", "-selection", "primary"], input=text, text=True, timeout=5)
+else:
+    def _set_clipboard(text):
+        clip = Gtk.Clipboard.get(Gdk.SELECTION_CLIPBOARD)
+        clip.set_text(text, -1)
+    def _set_primary(text):
+        prim = Gtk.Clipboard.get(Gdk.SELECTION_PRIMARY)
+        prim.set_text(text, -1)
+
+def _deliver_text(text):
+    _set_clipboard(text)
+    _set_primary(text)
+    if _type_text(text):
+        snack("Typed!")
+    else:
+        snack("Typing failed — text on clipboard, paste it yourself", "dialog-warning")
+    print(f"stt: delivered {len(text)} chars", file=sys.stderr)
+
+MIC_ICON = "audio-input-microphone" if Gtk.IconTheme.get_default().has_icon("audio-input-microphone") else "microphone"
+
+# ponytail: paplay → pw-play → aplay, distros differ on default audio player
+_PLAY_CMDS = ["paplay", "pw-play", "aplay"]
+PLAY_CMD = next((c for c in _PLAY_CMDS if shutil.which(c)), "aplay")
 
 def load_language():
     try:
@@ -218,7 +271,7 @@ def gen_beep():
 
 def gen_icons():
     pix = Gtk.IconTheme.get_default().load_icon(
-        "audio-input-microphone", 22, Gtk.IconLookupFlags.FORCE_SIZE)
+        MIC_ICON, 22, Gtk.IconLookupFlags.FORCE_SIZE)
     specs = [("idle", (0.15, 0.55, 0.92)),   # blue — ready
              ("warn", (0.92, 0.55, 0.15)),   # orange — no key / error
              ("rec",  (0.92, 0.15, 0.12))]   # red — recording
@@ -250,7 +303,7 @@ def gen_icons():
         s.write_to_png(ICON_SPIN[i])
 
 def ding():
-    subprocess.Popen(["paplay", BEEP_FILE],
+    subprocess.Popen([PLAY_CMD, BEEP_FILE],
                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 def snack(msg, icon="microphone"):
@@ -343,15 +396,7 @@ def _transcribe_local():
         GLib.idle_add(update_ui)
         return
     if text:
-        clip = Gtk.Clipboard.get(Gdk.SELECTION_CLIPBOARD)
-        clip.set_text(text, -1)
-        prim = Gtk.Clipboard.get(Gdk.SELECTION_PRIMARY)
-        prim.set_text(text, -1)
-        if TYPETOOL == "wtype":
-            subprocess.run(["wtype", text])
-        else:
-            subprocess.run(["xdotool", "type", "--", text])
-        GLib.idle_add(lambda: snack("Typed!"))
+        GLib.idle_add(_deliver_text, text)
     else:
         GLib.idle_add(lambda: snack("No speech detected", "dialog-warning"))
     processing = False
@@ -407,22 +452,13 @@ def transcribe():
             if text:
                 break
             break  # empty text — silent audio, don't retry
-        except Exception:
+        except Exception as e:
+            print(f"[stt] transcribe error (attempt {attempt}/{MAX_RETRIES}): {e}", file=sys.stderr)
             if attempt == MAX_RETRIES:
                 GLib.idle_add(lambda: snack(
                     f"Failed after {MAX_RETRIES} attempts — check connection", "dialog-error"))
     if text:
-        # clipboard as safety net (works on X11 + Wayland)
-        clip = Gtk.Clipboard.get(Gdk.SELECTION_CLIPBOARD)
-        clip.set_text(text, -1)
-        prim = Gtk.Clipboard.get(Gdk.SELECTION_PRIMARY)
-        prim.set_text(text, -1)
-        # type it
-        if TYPETOOL == "wtype":
-            subprocess.run(["wtype", text])
-        else:
-            subprocess.run(["xdotool", "type", "--", text])
-        GLib.idle_add(lambda: snack("Typed!"))
+        GLib.idle_add(_deliver_text, text)
     else:
         GLib.idle_add(lambda: snack("No speech detected", "dialog-warning"))
     processing = False
@@ -931,7 +967,7 @@ def set_language(_widget):
 Notify.init("stt-type")
 
 indicator = AppIndicator.Indicator.new(
-    "stt-type" if not DEV else "stt-type-dev", "audio-input-microphone",
+    "stt-type" if not DEV else "stt-type-dev", MIC_ICON,
     AppIndicator.IndicatorCategory.APPLICATION_STATUS)
 indicator.set_status(AppIndicator.IndicatorStatus.ACTIVE)
 
