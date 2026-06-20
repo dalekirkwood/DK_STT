@@ -11,7 +11,11 @@ echo "=== STT Type Installer ==="
 
 # ── deps ──
 echo "[1/7] Installing apt dependencies..."
-sudo apt install -y python3-gi gir1.2-appindicator3-0.1 gir1.2-notify-0.7 xdotool curl alsa-utils
+sudo apt install -y python3-gi python3-gi-cairo gir1.2-gtk-3.0 gir1.2-notify-0.7 \
+    xdotool curl alsa-utils pulseaudio-utils
+# appindicator package name differs across distros (Debian dropped the classic one)
+sudo apt install -y gir1.2-ayatanaappindicator3-0.1 \
+    || sudo apt install -y gir1.2-appindicator3-0.1
 if [ "$XDG_SESSION_TYPE" = "wayland" ]; then
     sudo apt install -y wtype ydotool wl-clipboard 2>/dev/null || true
     sudo usermod -aG input "$USER" 2>/dev/null || true
